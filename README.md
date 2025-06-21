@@ -90,7 +90,8 @@ A recipe is **keto only if _every ingredient_ has ≤10g carbs per 100g**.
 
 4. **💾 Cache Lookup**
    - Results stored in `SEARCH_CACHE` to improve speed
-  
+
+---
    
 # 🥑 Search By Ingredients Challenge
 ![Argmax](https://argmaxml.com/wp-content/uploads/2024/04/Argmax_logo_inline.svg)
