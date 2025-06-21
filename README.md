@@ -1,3 +1,87 @@
+# 🥑 Keto Classifier & 🌱 Vegan Classifier
+
+A multi-layered classification system for dietary labels based on ingredient-level heuristics and machine learning.
+
+---
+
+## 🥑 Keto Classifier
+
+<h3 style="color: #3b82f6;">Objective</h3>
+
+> _"Contains no ingredients with more than 10g of carbohydrates per 100g serving."_
+
+### 🚦 Process Overview: Fast-Fail System
+
+1. **Manual Keto Override (Fast Pass)**  
+   ~30 always-keto ingredients (e.g. butter, beef, avocado)
+
+2. **Manual Non-Keto Rejection (Fast Fail)**  
+   ~100 non-keto ingredients (e.g. sugar, flour, potato)
+
+3. **Database Fallback (Fuzzy Matching)**  
+   Query USDA database with `thefuzz` (WRatio > 90)
+
+4. **Default to Non-Keto**  
+   _Guilty until proven innocent_
+
+> ✅ A recipe is only classified as Keto if **every** ingredient passes **all** checks.
+
+---
+
+## 🌱 Vegan Classifier
+
+<h3 style="color: #16a34a;">Objective</h3>
+
+> _"Absolutely no animal products."_
+
+### 🧠 Process Overview: Hybrid Heuristic + ML
+
+1. **Vegan Prefix Pass**  
+   Identify vegan alternatives (e.g. almond milk, peanut butter)
+
+2. **Non-Vegan Rejection**  
+   Screen against 200+ non-vegan ingredients (meat, dairy, seafood)
+
+3. **Definitive Vegan Pass**  
+   Recognize common vegan staples (e.g. water, flour)
+
+4. **ML Model Fallback**  
+   Transformer model for ambiguous ingredients  
+   `argmaxinc/deberta-v3-base-plant-animal-based` (HuggingFace)
+
+> ✅ A recipe is only classified as Vegan if **every** ingredient passes **all** checks.
+
+---
+
+## ⚙️ Shared Challenges & Solutions
+
+| Challenge | Solution |
+|----------|----------|
+| **Messy ingredients** | `robust_ingredient_splitter` and `inflect` for de-pluralization |
+| **Over-permissiveness** | Expanded keyword lists and stricter defaults |
+| **Bias on known data** | Ongoing keyword tuning and generalization strategies |
+| **Transformer performance** | Rule-based filters + caching to reduce inference calls |
+| **Semantic ambiguity** | Prefix-based rules to detect edge cases like _peanut butter_ |
+
+---
+
+## 🔄 Flowcharts (Simplified)
+
+**Keto Flow:**  
+`Ingredient → Fast Pass → Fast Fail → Fuzzy Match → Pass/Fail`
+
+**Vegan Flow:**  
+`Ingredient → Rule-Based Checks → ML Fallback → Cache Result → Pass/Fail`
+
+---
+
+## 🛠 Technologies
+
+- Python 3.x
+- `thefuzz`
+- USDA food database
+- Hugging Face Transformers
+
 # 🥑 Search By Ingredients Challenge
 ![Argmax](https://argmaxml.com/wp-content/uploads/2024/04/Argmax_logo_inline.svg)
 
