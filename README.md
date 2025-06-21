@@ -1,87 +1,97 @@
-# 🥑 Keto Classifier & 🌱 Vegan Classifier
+# 🥗 Meal Diet Classifier
 
-A multi-layered classification system for dietary labels based on ingredient-level heuristics and machine learning.
-
----
-
-## 🥑 Keto Classifier
-
-<h3 style="color: #3b82f6;">Objective</h3>
-
-> _"Contains no ingredients with more than 10g of carbohydrates per 100g serving."_
-
-### 🚦 Process Overview: Fast-Fail System
-
-1. **Manual Keto Override (Fast Pass)**  
-   ~30 always-keto ingredients (e.g. butter, beef, avocado)
-
-2. **Manual Non-Keto Rejection (Fast Fail)**  
-   ~100 non-keto ingredients (e.g. sugar, flour, potato)
-
-3. **Database Fallback (Fuzzy Matching)**  
-   Query USDA database with `thefuzz` (WRatio > 90)
-
-4. **Default to Non-Keto**  
-   _Guilty until proven innocent_
-
-> ✅ A recipe is only classified as Keto if **every** ingredient passes **all** checks.
+This repository contains a solution for classifying meals as **vegan** and/or **keto** using a combination of rule-based heuristics, a nutritional database, and a machine learning model — **without relying on pre-labeled data**.
 
 ---
 
-## 🌱 Vegan Classifier
+## 🧠 Classification Criteria
 
-<h3 style="color: #16a34a;">Objective</h3>
-
-> _"Absolutely no animal products."_
-
-### 🧠 Process Overview: Hybrid Heuristic + ML
-
-1. **Vegan Prefix Pass**  
-   Identify vegan alternatives (e.g. almond milk, peanut butter)
-
-2. **Non-Vegan Rejection**  
-   Screen against 200+ non-vegan ingredients (meat, dairy, seafood)
-
-3. **Definitive Vegan Pass**  
-   Recognize common vegan staples (e.g. water, flour)
-
-4. **ML Model Fallback**  
-   Transformer model for ambiguous ingredients  
-   `argmaxinc/deberta-v3-base-plant-animal-based` (HuggingFace)
-
-> ✅ A recipe is only classified as Vegan if **every** ingredient passes **all** checks.
+- **Vegan Meal**: Contains _no animal products_ (e.g., meat, poultry, fish, dairy, eggs, honey, etc.).
+- **Keto Meal**: Contains _no single ingredient_ with more than **10g of carbohydrates per 100g**.
 
 ---
 
-## ⚙️ Shared Challenges & Solutions
+## 🚀 Features
 
-| Challenge | Solution |
-|----------|----------|
-| **Messy ingredients** | `robust_ingredient_splitter` and `inflect` for de-pluralization |
-| **Over-permissiveness** | Expanded keyword lists and stricter defaults |
-| **Bias on known data** | Ongoing keyword tuning and generalization strategies |
-| **Transformer performance** | Rule-based filters + caching to reduce inference calls |
-| **Semantic ambiguity** | Prefix-based rules to detect edge cases like _peanut butter_ |
+- **🧹 Ingredient Parsing**  
+  A robust parser standardizes messy ingredient strings into clean, interpretable names.
+
+- **🌱 Vegan Classifier**  
+  Combines rules, keyword matching, and a transformer-based ML model to detect animal-derived products.
+
+- **🥑 Keto Classifier**  
+  Uses rule-based rejection/approval and USDA-based nutrition data with fuzzy matching.
+
+- **⚡ Performance Optimized**  
+  Caching and lazy-loading reduce redundant computations.
+---
+
+## ⚙️ How It Works
+
+### 🧼 Ingredient Parsing
+
+The `parse_ingredient()` utility is the first step. It:
+
+- Converts to lowercase
+- Removes parentheticals
+- Strips units, numbers, fractions (e.g., `2 1/2 cups`, `100g`)
+- Removes adjectives (e.g., `fresh`, `chopped`)
+- Normalizes spacing
+
+> Example:  
+> `"2 1/2 cups (12.5 oz) sifted all-purpose flour, for dusting"`  
+> ⟶ `"all-purpose flour"`
 
 ---
 
-## 🔄 Flowcharts (Simplified)
+### 🌱 1. Vegan Classifier
 
-**Keto Flow:**  
-`Ingredient → Fast Pass → Fast Fail → Fuzzy Match → Pass/Fail`
+A recipe is **vegan only if _all ingredients_ are vegan**.
 
-**Vegan Flow:**  
-`Ingredient → Rule-Based Checks → ML Fallback → Cache Result → Pass/Fail`
+#### 🔄 Classification Flow:
+
+1. **Cache Lookup**  
+   Uses `VEGAN_CACHE` to avoid repeated computation.
+
+2. **Rule-Based Heuristics (Fast Path)**  
+   - 🛡️ Edge Case Handling: `"eggless"` ≠ `"egg"`
+   - 🥛 Vegan Prefix Pass: `"soy milk"`, `"cashew cheese"` ⟶ safe
+   - 🚫 Non-Vegan Keywords: e.g., `chicken`, `milk`, `cheese`
+   - ✅ Always-Vegan Keywords: e.g., `flour`, `salt`, `olive oil`
+
+3. **🤖 ML Fallback**  
+   If rules don’t resolve the classification:
+   - Uses [`nisuga/food_type_classification_model`](https://huggingface.co/nisuga/food_type_classification_model)
+   - Predicts `'PLANT_BASED'` vs. `'ANIMAL_BASED'`
+   - If prediction fails → defaults to **non-vegan**
+
+4. **🗃️ Cache Update**  
+   Result is stored for future reuse.
 
 ---
 
-## 🛠 Technologies
+### 🥑 2. Keto Classifier
 
-- Python 3.x
-- `thefuzz`
-- USDA food database
-- Hugging Face Transformers
+A recipe is **keto only if _every ingredient_ has ≤10g carbs per 100g**.
 
+#### 🔄 Classification Flow:
+
+1. **Keyword Checks**
+   - 🚫 `NON_KETO_KEYWORDS`: e.g., `sugar`, `bread`, `rice` ⟶ immediate reject
+   - ✅ `MANUAL_KETO_OVERRIDES`: e.g., `beef`, `avocado`, `olive oil` ⟶ fast pass
+
+2. **🍽️ Nutrition Database Lookup**
+   - Source: `data/nutrition_database.csv` - a modified version of the sr legacy data base (https://www.ars.usda.gov/northeast-area/beltsville-md-bhnrc/beltsville-human-nutrition-research-center/methods-and-application-of-food-composition-laboratory/mafcl-site-pages/sr-legacy-nutrient-search/)
+   - Uses `fuzz.WRatio` from [`thefuzz`](https://pypi.org/project/thefuzz/) to fuzzy match ingredients
+   - Requires a confidence score > **92%**
+
+3. **❗Safe Default**
+   - If no confident match is found, assign `1001g carbs` to force rejection
+
+4. **💾 Cache Lookup**
+   - Results stored in `SEARCH_CACHE` to improve speed
+  
+   
 # 🥑 Search By Ingredients Challenge
 ![Argmax](https://argmaxml.com/wp-content/uploads/2024/04/Argmax_logo_inline.svg)
 
