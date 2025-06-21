@@ -3,10 +3,16 @@ import sys
 from argparse import ArgumentParser
 from typing import List
 from time import time
-import pandas as pd
-import transformers
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
 import re
+import pandas as pd
+import ast
+try:
+    from sklearn.metrics import classification_report
+except ImportError:
+    # sklearn is optional
+    def classification_report(y, y_pred):
+        print("sklearn is not installed, skipping classification report")
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from typing import Set
 from typing import List, Dict, Any, Set, Optional
 from thefuzz import process, fuzz
@@ -14,16 +20,21 @@ from typing import Dict, Any, Optional, List
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 import sys
-import ast
+try:
+    from transformers import pipeline, Pipeline
+except ImportError:
+    print("Warning: `transformers` library not found. ML-based classification will not be available.")
+    print("Please run 'pip install transformers torch' to install.")
+    pipeline = None
+    Pipeline = None
 
 try:
-    from sklearn.metrics import classification_report
+    from sklearn.metrics import classification_report,confusion_matrix
 except ImportError:
     # sklearn is optional
     def classification_report(y, y_pred):
         print("sklearn is not installed, skipping classification report")
-
-
+        
 # ==============================================================================
 #  Vegan classifier
 # ==============================================================================
@@ -160,18 +171,6 @@ def parse_ingredient(ingredient_string: str) -> str:
 
     return clean_name
 
-# Make sure you have `transformers` and a backend like `torch` or `tensorflow` installed.
-# pip install transformers torch
-try:
-    from transformers import pipeline, Pipeline
-except ImportError:
-    print("Warning: `transformers` library not found. ML-based classification will not be available.")
-    print("Please run 'pip install transformers torch' to install.")
-    pipeline = None
-    Pipeline = None
-
-# Import the parser from the previous step.
-# Assume it's in a file named `ingredient_parser.py` in the same directory.
 
 
 # ==============================================================================
@@ -199,7 +198,7 @@ NON_VEGAN_KEYWORDS: Set[str] = {
     # --- Seafood (Shellfish & Other) ---
     'abalone', 'calamari', 'clams', 'cockle', 'conch', 'crab', 'crawfish', 'crayfish', 'cuttlefish', 'krill', 'langostino', 'lobster', 'mussels', 'octopus', 'oyster', 'oysters', 'prawns', 'scallop', 'scallops', 'scampi', 'sea urchin', 'seafood', 'shrimp', 'squid', 'uni', 'whelk',
     # --- Dairy ---
-    'asiago', 'bleu', 'brie', 'butter', 'buttermilk', 'camembert', 'casein', 'caseinate', 'cheddar', 'cheese', 'colby', 'cottage', 'cream', 'creme', 'curd', 'edam', 'feta', 'ghee', 'gorgonzola', 'gouda', 'gruyere', 'half-and-half', 'halloumi', 'havarti', 'kefir', 'lactalbumin', 'lactose', 'manchego', 'mascarpone', 'milk', 'monterey jack', 'mozzarella', 'muenster', 'neufchatel', 'paneer', 'parmesan', 'provolone', 'queso', 'ricotta', 'sour cream', 'whey', 'yogurt',
+    'asiago', 'bleu', 'brie', 'goat cheese', 'blue cheese', 'butter', 'buttermilk', 'camembert', 'casein', 'caseinate', 'cheddar', 'cheese', 'colby', 'cottage', 'cream', 'creme', 'curd', 'edam', 'feta', 'ghee', 'gorgonzola', 'gouda', 'gruyere', 'half-and-half', 'halloumi', 'havarti', 'kefir', 'lactalbumin', 'lactose', 'manchego', 'mascarpone', 'milk', 'monterey jack', 'mozzarella', 'muenster', 'neufchatel', 'paneer', 'parmesan', 'provolone', 'queso', 'ricotta', 'sour cream', 'whey', 'yogurt',
     # --- Animal Fats, By-products & Additives ---
     'ambergris', 'aspic', 'bone char', 'bone meal', 'bone marrow', 'bouillon', 'broth', 'carmine', 'chitin', 'cochineal', 'collagen', 'consomme', 'demi-glace', 'drippings', 'fat', 'fish oil', 'gelatin', 'glycerides', 'glycerol', 'isinglass', 'keratin', 'l-cysteine', 'lanolin', 'lard', 'lipase', 'musk', 'pepsin', 'rennet', 'schmaltz', 'shellac', 'stearic acid', 'stock', 'suet', 'tallow', 'vitamin d3',
     # --- Bee Products ---
@@ -217,7 +216,7 @@ ALWAYS_VEGAN_KEYWORDS: Set[str] = {
     # --- Seasonings, Herbs & Spices ---
     'basil', 'black pepper', 'cayenne', 'chili', 'cilantro', 'cinnamon', 'clove', 'cumin', 'curry', 'garlic', 'ginger', 'herbs', 'mustard', 'nutmeg', 'onion', 'oregano', 'paprika', 'parsley', 'pepper', 'rosemary', 'saffron', 'salt', 'spices', 'thyme', 'turmeric',
     # --- Liquids & Acids ---
-    'coffee', 'club soda', 'lemon juice', 'lime juice', 'seltzer', 'soda', 'tea', 'vegetable stock', 'vegetable broth', 'vinegar', 'water',
+    'coffee', 'club soda', 'lemon juice', 'lime juice', 'seltzer', 'soda', 'tea', 'vegetable stock', 'vegetable broth', 'vinegar', 'water','rice milk','vegan margarine'
 }
 
 
@@ -232,7 +231,7 @@ VEGAN_ALTERNATIVE_PREFIXES: Set[str] = {
     # --- Fruits & Vegetables ---
     'apple', 'avocado', 'banana', 'potato', 'vegetable', 'veggie',
     # --- Other ---
-    'cocoa', 'coconut', 'plant', 'plant-based', 'vegan',
+    'cocoa', 'coconut', 'plant', 'plant-based', 'vegan','non-dairy','vegan margarine', 'rice milk'
 }
 
 ALWAYS_KETO_KEYWORDS = {
@@ -257,7 +256,7 @@ def _get_classifier() -> Optional[Pipeline]:
             CLASSIFIER_PIPELINE  = pipeline("text-classification", model="nisuga/food_type_classification_model")
             print("INFO: Classifier initialized successfully.")
         except Exception as e:
-            print(f"ERROR: Failed to load Hugging Face model '{model_name}'. ML classification will be disabled.")
+            print(f"ERROR: Failed to load Hugging Face model nisuga/food_type_classification_model. ML classification will be disabled.")
             print(f"Error details: {e}")
             # Set to a dummy value to prevent re-trying
             CLASSIFIER_PIPELINE = "failed"
@@ -288,15 +287,17 @@ def is_ingredient_vegan(ingredient_string: str) -> bool:
     """
 
     # 1. Parse the ingredient string to get a clean, standardized name.
-    
     clean_name = parse_ingredient(ingredient_string)
 
     if not clean_name:
         return True  # An empty or unparsable ingredient is assumed to not make a dish non-vegan.
+    
+    # goat cheese
+    if "goat cheese" in clean_name:
+        return False
 
     # 2. Check cache for a quick result.
     if clean_name in VEGAN_CACHE:
-        
         return VEGAN_CACHE[clean_name]
 
     # --- 3. Apply Rule-Based Logic (Fast and Accurate Checks) ---
@@ -310,6 +311,7 @@ def is_ingredient_vegan(ingredient_string: str) -> bool:
     if any(prefix in clean_name for prefix in VEGAN_ALTERNATIVE_PREFIXES):
         # e.g., "peanut butter", "soy milk"
         VEGAN_CACHE[clean_name] = True
+        
         return True
 
     # General check for common non-vegan keywords.
@@ -317,7 +319,6 @@ def is_ingredient_vegan(ingredient_string: str) -> bool:
     words_in_name = set(clean_name.split())
     if not NON_VEGAN_KEYWORDS.isdisjoint(words_in_name):
         VEGAN_CACHE[clean_name] = False
-        
         return False
 
     # Check for always-vegan ingredients.
@@ -326,15 +327,14 @@ def is_ingredient_vegan(ingredient_string: str) -> bool:
         return True
 
     # --- 4. Fallback to ML Model for Ambiguous Cases ---
-    
     # Assume non-vegan as a safe default if ML model fails or is unavailable.
     result = False
     
     classifier = _get_classifier()
+
     if classifier:
         try:
             prediction = classifier(clean_name, top_k=1)[0]
-            
             # The model labels are 'plant-based' and 'animal-based'.
             if prediction['label'] == 'PLANT_BASED':
                 result = True
@@ -350,206 +350,107 @@ def is_ingredient_vegan(ingredient_string: str) -> bool:
     return result
 
 
-
-# --- Configuration ---
-# Path to the directory where you unzipped the SR Legacy files.
-DATA_SOURCE_PATH = './sr_legacy/'
-
-# The name for our final, clean database file.
-OUTPUT_DB_PATH = './data/nutrition_database.csv'
-
-# Column names for the legacy text files, based on USDA documentation.
-FOOD_DES_COLS = [
-    'NDB_No', 'FdGrp_Cd', 'Long_Desc', 'Shrt_Desc', 'ComName', 'ManufacName', 
-    'Survey', 'Ref_desc', 'Refuse', 'SciName', 'N_Factor', 'Pro_Factor', 
-    'Fat_Factor', 'CHO_Factor'
-]
-
-NUT_DATA_COLS = [
-    'NDB_No', 'Nutr_No', 'Nutr_Val', 'Num_Data_Pts', 'Std_Error', 'Src_Cd', 
-    'Deriv_Cd', 'Ref_NDB_No', 'Add_Nutr_Mark', 'Num_Studies', 'Min', 'Max', 
-    'DF', 'Low_EB', 'Up_EB', 'Stat_cmt', 'AddMod_Date', 'CC'
-]
-
-NUTR_DEF_COLS = [
-    'Nutr_No', 'Units', 'Tagname', 'NutrDesc', 'Num_Dec', 'SR_Order'
-]
-
-# The specific nutrients we want to extract.
-# `NutrDesc` is the column name in the legacy format.
-TARGET_NUTRIENTS = {
-    'Carbohydrate, by difference': 'carbs',
-    'Protein': 'protein',
-    'Sugars, total': 'sugar' # Note: In some versions, it's 'Sugars, total including NLEA'
-}
-
-def create_nutrition_database_from_txt():
-    """
-    Loads the raw USDA SR Legacy TXT files, processes them, and saves a clean,
-    wide-format nutritional database as a single CSV file.
-    
-    This version is specifically adapted to parse the tilde/caret delimited format.
-    """
-    print("--- Starting Nutrition Database Preparation (from TXT files) ---")
-
-    # --- 1. Load the necessary TXT files with correct parsing ---
-    try:
-        print(f"Loading data from '{DATA_SOURCE_PATH}'...")
-        # food.csv equivalent is FOOD_DES.txt
-        food_df = pd.read_csv(
-            os.path.join(DATA_SOURCE_PATH, 'FOOD_DES.txt'),
-            sep='^',
-            quotechar='~',
-            header=None,
-            names=FOOD_DES_COLS,
-            encoding='latin1' # This encoding is often needed for these files
-        )
-
-        # nutrient.csv equivalent is NUTR_DEF.txt
-        nutrient_df = pd.read_csv(
-            os.path.join(DATA_SOURCE_PATH, 'NUTR_DEF.txt'),
-            sep='^',
-            quotechar='~',
-            header=None,
-            names=NUTR_DEF_COLS,
-            encoding='latin1'
-        )
-
-        # food_nutrient.csv equivalent is NUT_DATA.txt
-        food_nutrient_df = pd.read_csv(
-            os.path.join(DATA_SOURCE_PATH, 'NUT_DATA.txt'),
-            sep='^',
-            quotechar='~',
-            header=None,
-            names=NUT_DATA_COLS,
-            encoding='latin1'
-        )
-        
-    except FileNotFoundError as e:
-        print(f"ERROR: Could not find required TXT files in '{DATA_SOURCE_PATH}'.")
-        print("Please ensure FOOD_DES.txt, NUTR_DEF.txt, and NUT_DATA.txt are present.")
-        print(f"Details: {e}")
-        return
-
-    # --- 2. Filter for only the nutrients we care about ---
-    #print(f"Filtering for target nutrients: {list(TARGET_NUTRIENTS.keys())}")
-    target_nutrient_ids = nutrient_df[nutrient_df['NutrDesc'].isin(TARGET_NUTRIENTS.keys())]
-    
-    filtered_food_nutrient_df = food_nutrient_df[
-        food_nutrient_df['Nutr_No'].isin(target_nutrient_ids['Nutr_No'])
-    ]
-
-    # --- 3. Merge the tables to get food and nutrient names ---
-    #print("Merging data tables...")
-    merged_df = pd.merge(
-        filtered_food_nutrient_df,
-        food_df[['NDB_No', 'Long_Desc']],
-        on='NDB_No',
-        how='left'
-    )
-    merged_df = pd.merge(
-        merged_df,
-        nutrient_df[['Nutr_No', 'NutrDesc']],
-        on='Nutr_No',
-        how='left'
-    )
-
-    # --- 4. Pivot the table from "long" to "wide" format ---
-    #print("Pivoting table to wide format...")
-    # Use the original legacy column names for pivoting
-    nutrition_pivot_df = merged_df.pivot_table(
-        index='Long_Desc',
-        columns='NutrDesc',
-        values='Nutr_Val'
-    ).reset_index()
-
-    # --- 5. Clean up the final DataFrame ---
-    #print("Cleaning up the final database...")
-    nutrition_pivot_df = nutrition_pivot_df.rename(columns=TARGET_NUTRIENTS)
-    nutrition_pivot_df = nutrition_pivot_df.rename(columns={'Long_Desc': 'food_name'})
-    
-    cols_to_fill = ['carbs', 'protein', 'sugar']
-    for col in cols_to_fill:
-        if col not in nutrition_pivot_df.columns:
-            nutrition_pivot_df[col] = 0.0
-    nutrition_pivot_df[cols_to_fill] = nutrition_pivot_df[cols_to_fill].fillna(0.0)
-    
-    nutrition_pivot_df['food_name'] = nutrition_pivot_df['food_name'].str.lower()
-    
-    # --- 6. Save the final database ---
-    os.makedirs(os.path.dirname(OUTPUT_DB_PATH), exist_ok=True)
-    nutrition_pivot_df.to_csv(OUTPUT_DB_PATH, index=False)
-    
-create_nutrition_database_from_txt()
-
-# ==============================================================================
-# VEGAN CLASSIFIER
-# ==============================================================================
-
-    
-def is_vegan(ingredients):
-    for ingredient in ingredients:
-        clean_ingredient = parse_ingredient(ingredient).lower()
-        ingredient_words = set(clean_ingredient.split())
-        if not NON_VEGAN_KEYWORDS.isdisjoint(ingredient_words):
-            return False
-    return all(map(is_ingredient_vegan, ingredients))
-    
-
-
-# ==============================================================================
-#  Keto
-# ==============================================================================
-
-try:
-    from sklearn.metrics import classification_report, confusion_matrix
-except ImportError:
-    def classification_report(y_true, y_pred, **kwargs):
-        print("Warning: scikit-learn not found. Skipping classification report.", file=sys.stderr)
-        return "scikit-learn not installed."
-    
-    def confusion_matrix(y_true, y_pred):
-        print("Warning: scikit-learn not found. Cannot generate confusion matrix.", file=sys.stderr)
-        return [[0, 0], [0, 0]]
-
-
-UNITS: Set[str] = {"c", "cup", "cups", "g", "gram", "grams", "kg", "kilogram", "kilograms", "lb", "lbs", "pound", "pounds", "ml", "milliliter", "milliliters", "oz", "ounce", "ounces", "pinch", "pinches", "splash", "splashes", "sprig", "sprigs", "t", "tsp", "teaspoon", "teaspoons", "T", "tbsp", "tablespoon", "tablespoons", "can", "cans", "clove", "cloves", "dash", "dashes", "drizzle", "drop", "drops", "gallon", "gallons", "handful", "handfuls", "head", "heads", "package", "packages", "packet", "packets", "pint", "pints", "quart", "quarts", "scoop", "scoops", "sheet", "sheets", "slice", "slices", "stalk", "stalks", "stick", "sticks", "strip", "strips"}
-
-DESCRIPTORS: Set[str] = {'beaten', 'blanched', 'boiled', 'braised', 'brewed', 'brined', 'broken', 'charred', 'chilled', 'chopped', 'clarified', 'coarsely', 'crumbled', 'crushed', 'cubed', 'cut', 'deboned', 'deglazed', 'deseeded', 'deveined', 'diced', 'dissolved', 'divided', 'drained', 'finely', 'flaked', 'folded', 'grated', 'grilled', 'halved', 'heated', 'hulled', 'husked', 'infused', 'julienned', 'juiced', 'kneaded', 'marinated', 'mashed', 'melted', 'minced', 'mixed', 'parboiled', 'patted', 'peeled', 'pitted', 'poached', 'pounded', 'prepared', 'pressed', 'pureed', 'quartered', 'rinsed', 'roasted', 'rolled', 'roughly', 'scalded', 'scored', 'scrubbed', 'seared', 'seeded', 'segmented', 'shaved', 'shredded', 'shucked', 'sifted', 'skewered', 'sliced', 'slivered', 'smashed', 'soaked', 'softened', 'squeezed', 'steamed', 'stemmed', 'stewed', 'strained', 'stuffed', 'thawed', 'thinly', 'tied', 'toasted', 'torn', 'trimmed', 'whisked', 'zested', 'canned', 'cold', 'condensed', 'cooked', 'cooled', 'cored', 'creamed', 'cured', 'defrosted', 'fermented', 'firmly', 'freshly', 'frozen', 'hard', 'hot', 'instant', 'jarred', 'lean', 'leftover', 'light', 'lukewarm', 'optional', 'pasteurized', 'powdered', 'preserved', 'raw', 'ready-to-use', 'refrigerated', 'ripe', 'room', 'skin-on', 'skinless', 'soft', 'stiff', 'temperature', 'uncooked', 'undrained', 'unripe', 'warm', 'washed', 'whole', 'bite-sized', 'chunky', 'clump', 'coarse', 'fine', 'jumbo', 'large', 'long', 'medium', 'round', 'short', 'small', 'thick', 'thin', 'about', 'additional', 'approximately', 'bunch', 'extra', 'generous', 'heavy', 'heaping', 'level', 'more', 'packed', 'plus', 'scant', 'splash', 'sprig', 'sprinkle', 'bitter', 'salty', 'savory', 'sour', 'spicy', 'sweetened', 'unsalted', 'unsweetened', 'a', 'an', 'and', 'as', 'at', 'for', 'in', 'into', 'of', 'on', 'or', 'the', 'to', 'with', 'without', 'dusting', 'garnish', 'needed', 'serving', 'taste'}
-
-def _depluralize(word: str) -> str:
-    """A more robust de-pluralizer using the inflect library."""
-    # Fallback to simple version if inflect is not installed
-    if word.endswith('ss'): return word
-    if word.endswith('s'): return word[:-1]
-    return word
-
-def parse_ingredient(ingredient_string: str) -> str:
-    """An improved parser that cleans an ingredient string and de-pluralizes it."""
-    if not isinstance(ingredient_string, str) or not ingredient_string: return ""
-    text = ingredient_string.lower()
-    text = re.sub(r'\([^)]*\)', '', text)
-    text = re.sub(r'(\d+\s+)?\d+/\d+|\d+(\.\d+)?|\d+', '', text)
-    text = re.sub(r'[,.;:?!"]', '', text)
-    words = text.split()
-    clean_words = [_depluralize(word) for word in words if word not in UNITS and word not in DESCRIPTORS]
-    return ' '.join(clean_words).strip()
-
 # ==============================================================================
 # SECTION 2: KETO CLASSIFIER
 # ==============================================================================
 
 # --- Tuning Parameters & Knowledge Bases ---
 CONFIDENCE_THRESHOLD = 80
-LOG_FAILED_LOOKUPS = True
+LOG_FAILED_LOOKUPS = False
+
 
 # FIXED: Updated keyword lists with better coverage
 MANUAL_KETO_OVERRIDES = {
-    'water', 'salt', 'oil', 'butter', 'avocado', 'egg', 'chicken', 'beef', 'pork', 
-    'lamb', 'fish', 'salmon', 'tuna', 'shrimp', 'cheese', 'mayonnaise', 'vinegar', 
-    'mustard', 'splenda', 'stevia', 'erythritol', 'garlic', 'paprika', 'olive',
-    'cream', 'bacon', 'lettuce', 'spinach', 'broccoli', 'cauliflower', 'pepper',
-    'onion', 'mushroom', 'lemon', 'lime', 'herbs', 'spice'
+    # Beverages
+    'water', 'sparkling water', 'black coffee', 'tea', 'green tea', 'herbal tea',
+    'bone broth', 'chicken broth', 'beef broth', 'vegetable broth',
+    
+    # Basic ingredients & seasonings
+    'salt', 'black pepper', 'white pepper', 'sea salt', 'himalayan salt',
+    'garlic', 'garlic powder', 'onion powder', 'paprika', 'cumin', 'oregano',
+    'basil', 'thyme', 'rosemary', 'sage', 'cilantro', 'parsley', 'dill',
+    'cinnamon', 'nutmeg', 'ginger', 'turmeric', 'cayenne', 'chili powder',
+    'herbs', 'spice', 'vanilla extract', 'lemon extract',
+    
+    # Fats & oils
+    'oil', 'olive oil', 'coconut oil', 'avocado oil', 'mct oil', 'sesame oil',
+    'butter', 'ghee', 'lard', 'tallow', 'duck fat', 'macadamia oil',
+    
+    # Proteins - Meat
+    'chicken', 'chicken breast', 'chicken thigh', 'chicken wings', 'turkey',
+    'beef', 'ground beef', 'steak', 'ribeye', 'sirloin', 'brisket',
+    'pork', 'pork chops', 'pork belly', 'bacon', 'ham', 'prosciutto',
+    'lamb', 'lamb chops', 'ground lamb', 'venison', 'duck', 'goose',
+    'pepperoni', 'salami', 'chorizo', 'sausage', 'bratwurst',
+    
+    # Proteins - Seafood
+    'fish', 'salmon', 'tuna', 'cod', 'halibut', 'mahi mahi', 'sea bass',
+    'trout', 'mackerel', 'sardines', 'anchovies', 'herring',
+    'shrimp', 'crab', 'lobster', 'scallops', 'mussels', 'oysters',
+    'calamari', 'octopus', 'clams',
+    
+    # Proteins - Other
+    'egg', 'eggs', 'egg white', 'egg yolk', 'quail eggs',
+    
+    # Dairy & cheese
+    'cheese', 'cheddar cheese', 'parmesan cheese', 'mozzarella cheese',
+    'swiss cheese', 'goat cheese', 'cream cheese', 'blue cheese',
+    'feta cheese', 'brie cheese', 'camembert cheese', 'ricotta cheese',
+    'cottage cheese', 'mascarpone', 'heavy cream', 'cream', 'sour cream',
+    'greek yogurt', 'full fat yogurt', 'kefir',
+    
+    # Vegetables - Leafy greens
+    'lettuce', 'spinach', 'arugula', 'kale', 'swiss chard', 'collard greens',
+    'romaine lettuce', 'iceberg lettuce', 'butter lettuce', 'endive',
+    'radicchio', 'watercress', 'bok choy', 'cabbage', 'brussels sprouts',
+    
+    # Vegetables - Cruciferous
+    'broccoli', 'cauliflower', 'cabbage', 'brussels sprouts', 'kohlrabi',
+    'turnip', 'radish', 'daikon radish',
+    
+    # Vegetables - Other low-carb
+    'asparagus', 'green beans', 'zucchini', 'yellow squash', 'spaghetti squash',
+    'cucumber', 'celery', 'bell pepper', 'pepper', 'jalapeño', 'serrano pepper',
+    'poblano pepper', 'mushroom', 'shiitake mushroom', 'portobello mushroom',
+    'button mushroom', 'cremini mushroom', 'oyster mushroom',
+    'eggplant', 'tomato', 'cherry tomato', 'onion', 'green onion', 'scallion',
+    'leek', 'shallot', 'fennel', 'okra', 'artichoke', 'hearts of palm',
+    'bamboo shoots', 'bean sprouts', 'jicama',
+    
+    # Fruits - Low carb
+    'avocado', 'olive', 'olives', 'coconut', 'lemon', 'lime',
+    'blackberry', 'raspberry', 'strawberry', 'cranberry',
+    
+    # Nuts & seeds
+    'almond', 'walnut', 'pecan', 'macadamia', 'hazelnut', 'brazil nut',
+    'pine nut', 'pistachio', 'pumpkin seed', 'sunflower seed',
+    'chia seed', 'flax seed', 'hemp seed', 'sesame seed',
+    'almond butter', 'peanut butter', 'sunflower butter', 'tahini',
+    
+    # Condiments & sauces
+    'mayonnaise', 'mustard', 'dijon mustard', 'yellow mustard',
+    'hot sauce', 'tabasco', 'sriracha', 'horseradish', 'wasabi',
+    'vinegar', 'apple cider vinegar', 'white vinegar', 'red wine vinegar',
+    'balsamic vinegar', 'rice vinegar', 'coconut aminos', 'tamari',
+    'fish sauce', 'worcestershire sauce', 'pesto', 'tapenade',
+    
+    # Sweeteners
+    'stevia', 'erythritol', 'monk fruit', 'xylitol', 'splenda',
+    'sucralose', 'aspartame', 'allulose',
+    
+    # Baking & cooking
+    'almond flour', 'coconut flour', 'psyllium husk', 'xanthan gum',
+    'baking powder', 'baking soda', 'cream of tartar', 'gelatin',
+    'agar agar', 'nutritional yeast',
+    
+    # Specialty keto products
+    'mct powder', 'collagen powder', 'protein powder', 'electrolyte powder',
+    'keto bread', 'shirataki noodles', 'kelp noodles', 'zucchini noodles',
+    'cauliflower rice', 'pork rinds', 'beef jerky', 'sugar free jello',
+    
+    # Fermented foods
+    'sauerkraut', 'kimchi', 'pickles', 'pickle', 'fermented vegetables',
+    'kombucha', 'kefir water'
 }
 
 NON_KETO_KEYWORDS = { 
@@ -567,7 +468,7 @@ NON_KETO_KEYWORDS = {
     'tangerine', 'apple', 'orange', 'strawberry', 'strawberrie', 
     
     # --- Alcoholic Beverages (High Carb) ---
-    'vodka', 'rum', 'liqueur', 'beer', 'wine',  # FIXED: Added alcohol
+    'vodka', 'rum', 'liqueur', 'beer', 'wine',  
     
     # --- Sugars & Syrups ---
     'agave', 'caramel', 'dextrose', 'fructose', 'glucose', 'honey', 
@@ -583,20 +484,50 @@ NON_KETO_KEYWORDS = {
 }
 
 # Database & Fuzzy Matching
-DB_PATH = './data/nutrition_database.csv'
+# --- Tuning Parameters & Knowledge Bases ---
+CONFIDENCE_THRESHOLD = 92
+KETO_CARB_THRESHOLD_PER_100G = 10.0
+
+# This block dynamically constructs the absolute path to the database file.
+# It ensures the file can be found correctly, especially inside a Docker container.
+
+# 1. Get the directory where THIS script (`diet_classifiers.py`) is located.
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+
+# 2. Construct the absolute path to the data directory and the CSV file.
+#    This assumes the `data` folder is located in the same directory as this script.
+DB_PATH = os.path.join(SCRIPT_DIR, 'data', 'nutrition_database.csv')
+
+# --- Global State for Database ---
 NUTRITION_DF: Optional[pd.DataFrame] = None
 FOOD_NAME_CHOICES: Optional[List[str]] = None
 SEARCH_CACHE: Dict[str, Optional[Dict]] = {}
-KETO_CARB_THRESHOLD_PER_100G = 10.0
+
 
 def _load_database() -> None:
+    """
+    Loads the nutritional database from the dynamically constructed absolute path.
+    This function uses lazy loading and is robust to different execution environments.
+    """
     global NUTRITION_DF, FOOD_NAME_CHOICES
-    if NUTRITION_DF is not None: return
+    
+    # Check if the database is already loaded into memory.
+    if NUTRITION_DF is not None:
+        return
+
     try:
+        # The print statement now shows the full, unambiguous path it's trying to load.
+        # This is excellent for debugging.
+        print(f"INFO: Loading nutritional database from absolute path: '{DB_PATH}'...")
         NUTRITION_DF = pd.read_csv(DB_PATH)
         FOOD_NAME_CHOICES = NUTRITION_DF['food_name'].tolist()
+        print("INFO: Database loaded successfully.")
     except FileNotFoundError:
-        print(f"CRITICAL ERROR: Nutritional database not found at '{DB_PATH}'. Aborting.", file=sys.stderr)
+        print(f"CRITICAL ERROR: Nutritional database not found at '{DB_PATH}'.", file=sys.stderr)
+        print("Please ensure the 'data' directory with 'nutrition_database.csv' is in the same directory as this script.", file=sys.stderr)
+        # In a web app, sys.exit() can be too abrupt. A better approach for production
+        # might be to raise an exception that the main app can catch.
+        # For this task, exiting is acceptable.
         sys.exit(1)
 
 def find_ingredient_nutrition(ingredient_name: str) -> Optional[Dict[str, Any]]:
@@ -627,11 +558,34 @@ def find_ingredient_nutrition(ingredient_name: str) -> Optional[Dict[str, Any]]:
         SEARCH_CACHE[ingredient_name] = result
         return result
 
-    # Fuzzy matching
+    # Fuzzy string matching to find the best nutritional data match
+    # This uses the fuzzywuzzy library to handle ingredient name variations
+
+    # Step 1: Find the closest matching food name from our nutrition database
+    # - ingredient_name: the cleaned/parsed ingredient (e.g., "tomato", "basil")
+    # - filtered_choices: list of available food names in nutrition database
+    # - scorer=fuzz.WRatio: uses Weighted Ratio algorithm for matching
+    #   * WRatio is good for partial matches and handles word order differences
+    #   * Example: "roma tomato" vs "tomato" would score highly
+    # - extractOne(): returns the single best match as a tuple (match_string, confidence_score)
     best_match = process.extractOne(ingredient_name, filtered_choices, scorer=fuzz.WRatio)
-    
+
+    # Step 2: Validate the match quality before using it
+    # best_match will be None if no matches found, or a tuple like ("tomato", 85)
+    # best_match[1] is the confidence score (0-100 scale)
+    # CONFIDENCE_THRESHOLD prevents accepting poor matches (typically 70-80)
     if best_match and best_match[1] >= CONFIDENCE_THRESHOLD:
+        
+        # Step 3: Extract the winning food name from the match result
+        # best_match[0] contains the actual food name string from our database
+        # This ensures we use the exact spelling that exists in our nutrition data
         matched_food_name = best_match[0]
+        
+        # Step 4: Look up nutritional information for the matched food
+        # Filter the nutrition DataFrame to find rows where food_name matches exactly
+        # .iloc[0] gets the first (and should be only) matching row
+        # .to_dict() converts the pandas Series to a dictionary for easy access
+        # Result contains all nutritional data: calories, protein, fat, vitamins, etc.
         result = NUTRITION_DF[NUTRITION_DF['food_name'] == matched_food_name].iloc[0].to_dict()
     else:
         # FIXED: Failed matches get HIGH carbs (not 0.0)
@@ -663,13 +617,16 @@ def is_ingredient_keto(ingredient: str, debug: bool = False) -> bool:
         matching_words = NON_KETO_KEYWORDS.intersection(ingredient_words)
         if debug: print(f"    ✗ Contains non-keto keyword(s): {matching_words} - NOT KETO")
         return False
-
+        
     # Fast pass for known keto ingredients
     if not MANUAL_KETO_OVERRIDES.isdisjoint(ingredient_words):
         matching_words = MANUAL_KETO_OVERRIDES.intersection(ingredient_words)
         if debug: print(f"    ✓ Contains keto override(s): {matching_words} - KETO")
         return True
-        
+
+
+
+
     # Database lookup for ambiguous ingredients
     nutrition_data = find_ingredient_nutrition(clean_name)
     if nutrition_data:
@@ -683,155 +640,53 @@ def is_ingredient_keto(ingredient: str, debug: bool = False) -> bool:
     if debug: print(f"    ? Unknown ingredient, defaulting to NOT KETO")
     return False
 
-def is_keto(ingredients: List[str], debug: bool = False) -> bool:
+
+def normalize_ingredient_input(data: Any) -> List[str]:
     """
-    Determines if a recipe is keto with optional debug output.
+    A robust parser that can handle multiple data formats and always returns a clean list of strings.
+    - If input is a list, it returns it directly (for the web app).
+    - If input is a string that looks like a list, it parses it (for the CSV).
+    - If input is another type (like NaN), it returns an empty list.
     """
-    if not isinstance(ingredients, list):
-        return False
+    if isinstance(data, list):
+        # This handles the web app case where data is already a clean list.
+        return data
         
-    if debug:
-        print(f"\n--- Analyzing recipe with {len(ingredients)} ingredients ---")
-        
-    for ingredient_str in ingredients:
-        if not is_ingredient_keto(ingredient_str, debug=debug):
-            if debug:
-                print(f"  --> Recipe Verdict: NOT KETO (Failed on: '{ingredient_str}')")
-            return False
-            
-    if debug:
-        print(f"  --> Recipe Verdict: KETO (All ingredients passed)")
-    return True
-
-
-# ==============================================================================
-# MAIN EXECUTION & REPORTING
-# ==============================================================================
-
-def parse_malformed_ingredient_string(s: str) -> List[str]:
-    """Parses a string that looks like a list but may be missing commas."""
-    if not isinstance(s, str): 
+    if not isinstance(data, str):
+        # Handles other unexpected types from pandas like NaN
         return []
-    
-    # First try to parse as a literal list
-    try: 
-        result = ast.literal_eval(s)
-        if isinstance(result, list):
-            return result
-    except (ValueError, SyntaxError):
-        pass
-    
-    # Try to extract quoted strings
-    quoted_matches = re.findall(r"'([^']*)'", s)
-    if quoted_matches:
-        return quoted_matches
-    
-    # If it's a single long string that looks like concatenated ingredients,
-    # try to split it intelligently
-    if len(s) > 100 and not s.startswith('['):  # Likely a concatenated string
-        # Split on common ingredient separators and numbers+units
-        # This is a heuristic approach for badly formatted data
-        ingredients = []
-        
-        # Split on patterns like "2 cups", "1 tablespoon", etc.
-        parts = re.split(r'(?=\d+(?:\s+\d+/\d+)?\s+(?:cup|tablespoon|teaspoon|pound|ounce|clove|package))', s)
-        
-        for part in parts:
-            if part.strip():
-                ingredients.append(part.strip())
-        
-        if len(ingredients) > 1:
-            print(f"DEBUG: Split concatenated string into {len(ingredients)} parts")
-            return ingredients
-    
-    # Fallback: treat as single ingredient
-    return [s] if s.strip() else []
 
-def print_confusion_matrix(y_true, y_pred, classifier_type: str):
-    """
-    Calculates and prints a labeled confusion matrix for a given classifier type.
-
-    Args:
-        y_true: The true labels from the ground truth data.
-        y_pred: The predicted labels from the classifier.
-        classifier_type: A string, either 'keto' or 'vegan', to set the labels.
-    """
-    # First, ensure scikit-learn was imported successfully
-    if 'confusion_matrix' not in globals():
-        print("Warning: scikit-learn not found. Skipping confusion matrix.", file=sys.stderr)
-        return
-
+    # This handles the notebook/CSV case where data is a string
     try:
-        # --- 1. Define labels based on the classifier type ---
-        if classifier_type.lower() == 'keto':
-            positive_class = 'Keto'
-            negative_class = 'Non-Keto'
-        elif classifier_type.lower() == 'vegan':
-            positive_class = 'Vegan'
-            negative_class = 'Non-Vegan'
-        else:
-            # A fallback for any other case
-            positive_class = 'Positive'
-            negative_class = 'Negative'
-
-        # --- 2. Dynamically generate the labels for the DataFrame ---
-        index_labels = [f'Actual: {negative_class}', f'Actual: {positive_class}']
-        column_labels = [f'Predicted: {negative_class}', f'Predicted: {positive_class}']
-
-        cm = confusion_matrix(y_true, y_pred)
-        cm_df = pd.DataFrame(cm, index=index_labels, columns=column_labels)
-
-        print(f"\n--- Confusion Matrix: {classifier_type.capitalize()} Classifier ---")
-        print(cm_df)
-        print("-" * 55)
-        
-        # Unpack the matrix values
-        tn, fp, fn, tp = cm.ravel()
-        
-        # --- 3. Dynamically generate the descriptive printout ---
-        print(f"  True Negatives (TN): {tn: >4} (Correctly predicted {negative_class})")
-        print(f"  False Positives(FP): {fp: >4} (Incorrectly predicted {positive_class})")
-        print(f"  False Negatives(FN): {fn: >4} (Incorrectly predicted {negative_class})")
-        print(f"  True Positives (TP): {tp: >4} (Correctly predicted {positive_class})")
-        print("-" * 55)
-        
-    except Exception as e:
-        print(f"Could not generate confusion matrix for '{classifier_type}': {e}")
-
-def main(args):
-    """Main function to load data, run classifiers, and print a full report."""
-    ground_truth = pd.read_csv(args.ground_truth, index_col=None)
-    ground_truth['ingredients'] = ground_truth['ingredients'].apply(parse_malformed_ingredient_string)
+        # Try to parse it as a literal Python list.
+        evaluated_list = ast.literal_eval(data)
+        if isinstance(evaluated_list, list):
+            return evaluated_list
+    except (ValueError, SyntaxError):
+        # If it fails, it might be a malformed string with no commas.
+        return re.findall(r"'([^']*)'", data)
     
+    # Fallback for completely unknown string formats
+    return []
 
-    _load_database()
-    start_time = time()
-    ground_truth['keto_pred'] = ground_truth['ingredients'].apply(lambda x: is_keto(x, debug=False))
-    ground_truth['vegan_pred'] = ground_truth['ingredients'].apply(is_vegan)
-    end_time = time()
-
-
-    # --- UPDATED REPORTING SECTION ---
-    print("\n" + "="*20 + " FINAL CLASSIFICATION REPORT " + "="*20)
-
-    # --- Keto Report ---
-    print("\n" + "="*20 + " Keto " + "="*20)
-    print(classification_report(ground_truth['keto'], ground_truth['keto_pred']))
-    # Call the new function with classifier_type='keto'
-    print_confusion_matrix(ground_truth['keto'], ground_truth['keto_pred'], classifier_type='keto')
-
-    # --- Vegan Report ---
-    print("\n" + "="*20 + " Vegan " + "="*20)
-    print(classification_report(ground_truth['vegan'], ground_truth['vegan_pred']))
-    # Call the new function with classifier_type='vegan'
-    print_confusion_matrix(ground_truth['vegan'], ground_truth['vegan_pred'], classifier_type='vegan')
-
-    print(f"\n== Time taken: {end_time:.2f} seconds ==")
+def is_keto(ingredients: Any) -> bool:
+    """
+    Production-ready entry point for Keto classification.
+    It robustly handles different input data types.
+    """
+    # 1. Ensure we have a clean list of ingredients, regardless of the source.
+    clean_ingredient_list = normalize_ingredient_input(ingredients)
     
-    return 0
+    # 2. Apply the core per-ingredient logic.
+    return all(map(is_ingredient_keto, clean_ingredient_list))
 
-if __name__ == "__main__":
-    parser = ArgumentParser(description="Run diet classifiers on a ground truth dataset.")
-    parser.add_argument("--ground_truth", type=str, default="/usr/src/data/ground_truth_sample.csv",
-                        help="Path to the ground truth CSV file.")
-    sys.exit(main(parser.parse_args()))
+def is_vegan(ingredients: Any) -> bool:
+    """
+    Production-ready entry point for Vegan classification.
+    It robustly handles different input data types.
+    """
+    # 1. Ensure we have a clean list of ingredients, regardless of the source.
+    clean_ingredient_list = normalize_ingredient_input(ingredients)
+
+    # 2. Apply the core per-ingredient logic.
+    return all(map(is_ingredient_vegan, clean_ingredient_list))
