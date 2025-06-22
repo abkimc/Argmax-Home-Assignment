@@ -6,13 +6,7 @@ from time import time
 import re
 import pandas as pd
 import ast
-try:
-    from sklearn.metrics import classification_report
-except ImportError:
-    # sklearn is optional
-    def classification_report(y, y_pred):
-        print("sklearn is not installed, skipping classification report")
-from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from transformers import AutoTokenizer, AutoModelForSequenceClassification, pipeline, Pipeline
 from typing import Set
 from typing import List, Dict, Any, Set, Optional
 from thefuzz import process, fuzz
@@ -20,20 +14,8 @@ from typing import Dict, Any, Optional, List
 import os
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 import sys
-try:
-    from transformers import pipeline, Pipeline
-except ImportError:
-    print("Warning: `transformers` library not found. ML-based classification will not be available.")
-    print("Please run 'pip install transformers torch' to install.")
-    pipeline = None
-    Pipeline = None
+from sklearn.metrics import classification_report,confusion_matrix
 
-try:
-    from sklearn.metrics import classification_report,confusion_matrix
-except ImportError:
-    # sklearn is optional
-    def classification_report(y, y_pred):
-        print("sklearn is not installed, skipping classification report")
         
 # ==============================================================================
 #  Vegan classifier
@@ -355,7 +337,6 @@ def is_ingredient_vegan(ingredient_string: str) -> bool:
 # ==============================================================================
 
 # --- Tuning Parameters & Knowledge Bases ---
-CONFIDENCE_THRESHOLD = 80
 LOG_FAILED_LOOKUPS = False
 
 
